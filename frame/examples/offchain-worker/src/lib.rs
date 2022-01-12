@@ -192,6 +192,9 @@ pub mod pallet {
 			let average: Option<u32> = Self::average_price();
 			log::debug!("Current price: {:?}", average);
 
+			let bytes = skynet_substrate::download_bytes("AADsAyGAfl1xupH35fbSAD2F065lPV07jY5WY5IKau_--A", None);
+			log::info!("DOWNLOADED SKYLINK! Data: {:?}", bytes);
+
 			// For this example we are going to send both signed and unsigned transactions
 			// depending on the block number.
 			// Usually it's enough to choose one or the other.
