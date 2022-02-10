@@ -57,6 +57,8 @@ pub struct UploadOptions<'a> {
     pub portal_url: &'a str,
     /// The endpoint to contact.
     pub endpoint_upload: &'a str,
+    /// Timeout.
+    pub timeout: u64,
     /// Optional custom cookie.
     pub custom_cookie: Option<&'a str>,
 }
@@ -66,6 +68,7 @@ impl Default for UploadOptions<'_> {
         Self {
             portal_url: DEFAULT_PORTAL_URL,
             endpoint_upload: "/skynet/skyfile",
+            timeout: 3_000,
             custom_cookie: None,
         }
     }
@@ -164,7 +167,7 @@ pub fn upload_bytes(
     }
 
     // Keeping the offchain worker execution time reasonable, so limiting the call to be within 3s.
-    let timeout = offchain::timestamp().add(rt_offchain::Duration::from_millis(3000));
+    let timeout = offchain::timestamp().add(rt_offchain::Duration::from_millis(opts.timeout));
 
     let pending = request
         .deadline(timeout) // Setting the timeout time

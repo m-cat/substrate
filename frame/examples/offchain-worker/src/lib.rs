@@ -45,28 +45,8 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use codec::{Decode, Encode};
-use frame_support::traits::Get;
-use frame_system::{
-	self as system,
-	offchain::{
-		AppCrypto, CreateSignedTransaction, SendSignedTransaction, SendUnsignedTransaction,
-		SignedPayload, Signer, SigningTypes, SubmitTransaction,
-	},
-};
-use lite_json::json::JsonValue;
 use sp_core::crypto::KeyTypeId;
-use sp_runtime::{
-	offchain::{
-		http,
-		storage::{MutateStorageError, StorageRetrievalError, StorageValueRef},
-		Duration,
-	},
-	traits::Zero,
-	transaction_validity::{InvalidTransaction, TransactionValidity, ValidTransaction},
-	RuntimeDebug,
-};
-use sp_std::vec::Vec;
+use sp_std::{str};
 
 #[cfg(test)]
 mod tests;
@@ -112,6 +92,16 @@ pub mod crypto {
 }
 
 pub use pallet::*;
+
+const PUBLIC_KEY: &str = "658b900df55e983ce85f3f9fb2a088d568ab514e7bbda51cfbfb16ea945378d9";
+const PRIVATE_KEY: &str = "7caffac49ac914a541b28723f11776d36ce81e7b9b0c96ccacd1302db429c79c658b900df55e983ce85f3f9fb2a088d568ab514e7bbda51cfbfb16ea945378d9";
+const DATA_KEY: &str = "historical-block-weights";
+
+/// Get entry error.
+#[derive(Debug)]
+enum Error {
+    GetHistoricalWeightError(skynet_substrate::DownloadError),
+}
 
 #[frame_support::pallet]
 pub mod pallet {
@@ -173,15 +163,11 @@ pub mod pallet {
 		/// You can use `Local Storage` API to coordinate runs of the worker.
 		fn offchain_worker(block_number: T::BlockNumber) {
 
-			// TODO: Need privatekey and datakey defined. Might be constant defined outside this fn.
-			
-			// TODO: Add option to increase timeout on SDK calls
-
-			// Note that having logs compiled to WASM may cause the size of the blob to increase
-			// significantly. You can use `RuntimeDebug` custom derive to hide details of the types
-			// in WASM. The `sp-api` crate also provides a feature `disable-logging` to disable
-			// all logging and thus, remove any logging from the WASM.
-			log::info!("Hello World from offchain workers!");
+			// // Note that having logs compiled to WASM may cause the size of the blob to increase
+			// // significantly. You can use `RuntimeDebug` custom derive to hide details of the types
+			// // in WASM. The `sp-api` crate also provides a feature `disable-logging` to disable
+			// // all logging and thus, remove any logging from the WASM.
+			// log::info!("Hello World from offchain workers!");
 
 			// Since off-chain workers are just part of the runtime code, they have direct access
 			// to the storage and other included pallets.
@@ -190,30 +176,39 @@ pub mod pallet {
 			let parent_hash = <system::Pallet<T>>::block_hash(block_number - 1u32.into());
 			log::debug!("Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
 
-			// TODO: Get resolver skylink for reading historical weight below
-			
-			// Check to see if we have already saved a block weight average
-			let historical_weight = skynet_substrate::download_bytes("AADsAyGAfl1xupH35fbSAD2F065lPV07jY5WY5IKau_--A", None);
+			// Get resolver skylink for reading historical weight below.
+			let skylink_bytes = skynet_substrate::get_entry_link(PUBLIC_KEY, DATA_KEY, None).unwrap();
+			let skylink = str::from_utf8(&skylink_bytes).unwrap();
 
-			// TODO: handle if None.
-			// TODO: Cast this as an int? (is u64)
+			// This method downloads the skylink, and returns the historical weight if it exists, else None.
+			let historical_weight = Self::get_historical_weight(skylink);
 
+			// Get the average weight based on the downloaded historical weight.
+			// If the return status is 404, assume 0 historical weight (None). On other error, return early from the offchain worker.
+			let average_weight = if let Ok(historical_weight) = historical_weight {
+				log::info!("Got historical weight from skylink! Data: {:?}", historical_weight);
 
-			// TODO: print as string
-			log::info!("DOWNLOADED SKYLINK! Data: {:?}", historical_weight);
+				self.average_weights(historical_weight)
+			} else {
+				return;
+			};
 
 			// TODO: Use .total() method to get total block weight.
+			// let weight = scale_info::prelude::format!("{:?}",<frame_system::Pallet<T>>::block_weight().total());
+			// log::info!("Block Weight: {:?}",<frame_system::Pallet<T>>::block_weight().total());
 			// TODO: average the block weight using using method defined below
-			let weight = scale_info::prelude::format!("{:?}",<frame_system::Pallet<T>>::block_weight());
-			log::info!("Block Weight: {:?}",<frame_system::Pallet<T>>::block_weight());
 
-			// TODO: modify to upload average value
-			let result = skynet_substrate::upload_bytes(&weight, "test.txt", None);
-			// TODO: print as string
-			log::info! ("UPLOADED SKYLINK! Data: {:?}", result);
+			// Encode the average weight into bytes.
+			let average_weight_bytes = encode_number(average_weight);
 
-			// TODO: use "setEntryData" with result from upload			
+			// Upload the average weight.
+			let result = skynet_substrate::upload_bytes(&average_weight_bytes, DATA_KEY, Some(&skynet_substrate::UploadOptions { timeout: 30_000, ..Default::default() }));
+			if let Ok(skylink_bytes) = result {
+				log::info! ("Uploaded average weight! Skylink: {:?}", str::from_utf8(&skylink_bytes).unwrap());
 
+				// Set the skylink in the v2 skylink with the result from upload.
+				let _ = skynet_substrate::set_entry_data(PRIVATE_KEY, DATA_KEY, &skylink_bytes, None);
+			}
 
 			// It's a good practice to keep `fn offchain_worker()` function minimal, and move most
 			// of the code to separate `impl` block.
@@ -355,7 +350,49 @@ pub mod pallet {
 // 	None,
 // }
 
-impl<T: Config> Pallet<T> {
+impl<T: Config> Pallet<T> { 	
+	
+	/// This method will use a function for taking a historical_weight and "averaging" with the current block weight
+	/// We'll average over roughly 1 day of blocks.
+	fn average_weights( historical_weight: Option<u64> ) -> u64 {
+		let block_weight = <frame_system::Pallet<T>>::block_weight().total();
+		let samples = 1440u64;
+
+		if let Some(historical_weight) = historical_weight {
+			// method to average
+			let mut average_weight = historical_weight - historical_weight / samples;
+			average_weight += block_weight / samples;
+
+			average_weight
+		} else
+			// No historical weight was found, so use the block weight.
+			block_weight
+		}
+	}
+
+	fn get_historical_weight( skylink: &str ) -> Result<Option<u64>, Error> {
+		// Check to see if we have already saved a block weight average
+		let historical_weight = skynet_substrate::download_bytes( skylink, None );
+
+		match historical_weight {
+			// If we get a 404, return None to indicate that there is no historical weight.
+			Err(skynet_substrate::DownloadError::RequestError(skynet_substrate::RequestError::UnexpectedStatus(404))) => Ok(None),
+			Err(e) => Err(Error::GetHistoricalWeightError(e)),
+			Ok(data) => {
+				// If data isn't parsable, return None and we'll reset.
+				if data.len() != 8 {
+					return Ok(None);
+				}
+
+				// Decode the returned data to a u64 from Vec<u8>.
+				let weight = decode_number(data[0..8].try_into().unwrap());
+
+				Ok(Some(weight))
+			}
+		}
+	}
+
+
 	// fn choose_transaction_type(block_number: T::BlockNumber) -> TransactionType {
 	// 	/// A friendlier name for the error that is going to be returned in case we are in the grace
 	// 	/// period.
@@ -696,4 +733,23 @@ impl<T: Config> Pallet<T> {
 	// 		.propagate(true)
 	// 		.build()
 	// }
+}
+
+fn decode_number(encoded_num: [u8; 8]) -> u64 {
+    let mut decoded: u64 = 0;
+    for encoded_byte in encoded_num.into_iter().rev() {
+        decoded <<= 8;
+        decoded |= encoded_byte as u64
+    }
+    decoded
+}
+
+fn encode_number(mut num: u64) -> [u8; 8] {
+    let mut encoded: [u8; 8] = [0; 8];
+    for encoded_byte in &mut encoded {
+        let byte = num & 0xff;
+        *encoded_byte = byte as u8;
+        num >>= 8;
+    }
+    encoded
 }
