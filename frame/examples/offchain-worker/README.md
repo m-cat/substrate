@@ -31,10 +31,9 @@ License: Unlicense
 
 ## Running the Node
 
-Make sure you are using Rust nightly with the wasm toolchain installed.
-
-Please `cd` into this directory and run:
+Make sure you are using Rust nightly with the wasm toolchain installed and run:
 
 ```
+cd bin/node-template/node
 cargo run --release -- --dev --offchain-worker --tmp
 ```

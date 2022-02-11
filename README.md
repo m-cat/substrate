@@ -8,9 +8,7 @@ Substrate is a next-generation framework for blockchain innovation 🚀.
 
 ## Trying it out
 
-Simply go to [docs.substrate.io](https://docs.substrate.io) and follow the
-[installation](https://docs.substrate.io/v3/getting-started/overview) instructions. You can
-also try out one of the [tutorials](https://docs.substrate.io/tutorials/).
+See the example Skynet offchain worker [https://github.com/SkynetLabs/skynet-substrate-offchain-worker-node/tree/skynet-substrate/frame/examples/offchain-worker](here). Follow the instructions there to try it out!
 
 ## Contributions & Code of Conduct
 
@@ -28,4 +26,3 @@ The security policy and procedures can be found in [`docs/SECURITY.md`](docs/SEC
 The reason for the split-licensing is to ensure that for the vast majority of teams using Substrate to create feature-chains, then all changes can be made entirely in Apache2-licensed code, allowing teams full freedom over what and how they release and giving licensing clarity to commercial teams.
 
 In the interests of the community, we require any deeper improvements made to Substrate's core logic (e.g. Substrate's internal consensus, crypto or database code) to be contributed back so everyone can benefit.
-
