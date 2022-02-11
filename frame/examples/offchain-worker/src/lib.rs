@@ -95,7 +95,7 @@ pub use pallet::*;
 
 const PUBLIC_KEY: &str = "658b900df55e983ce85f3f9fb2a088d568ab514e7bbda51cfbfb16ea945378d9";
 const PRIVATE_KEY: &str = "7caffac49ac914a541b28723f11776d36ce81e7b9b0c96ccacd1302db429c79c658b900df55e983ce85f3f9fb2a088d568ab514e7bbda51cfbfb16ea945378d9";
-const DATA_KEY: &str = "historical-block-weights";
+const DATA_KEY: &str = "block-weights-test";
 
 /// Get entry error.
 #[derive(Debug)]
@@ -173,12 +173,13 @@ pub mod pallet {
 			// to the storage and other included pallets.
 			//
 			// We can easily import `frame_system` and retrieve a block hash of the parent block.
-			let parent_hash = <system::Pallet<T>>::block_hash(block_number - 1u32.into());
-			log::debug!("Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
+			let parent_hash = <frame_system::Pallet<T>>::block_hash(block_number - 1u32.into());
+			log::info!("Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
 
 			// Get resolver skylink for reading historical weight below.
 			let skylink_bytes = skynet_substrate::get_entry_link(PUBLIC_KEY, DATA_KEY, None).unwrap();
 			let skylink = str::from_utf8(&skylink_bytes).unwrap();
+			log::info!("Entry link: {:?}", skylink);
 
 			// This method downloads the skylink, and returns the historical weight if it exists, else None.
 			let historical_weight = Self::get_historical_weight(skylink);
@@ -188,15 +189,10 @@ pub mod pallet {
 			let average_weight = if let Ok(historical_weight) = historical_weight {
 				log::info!("Got historical weight from skylink! Data: {:?}", historical_weight);
 
-				self.average_weights(historical_weight)
+				Self::average_weights(historical_weight)
 			} else {
 				return;
 			};
-
-			// TODO: Use .total() method to get total block weight.
-			// let weight = scale_info::prelude::format!("{:?}",<frame_system::Pallet<T>>::block_weight().total());
-			// log::info!("Block Weight: {:?}",<frame_system::Pallet<T>>::block_weight().total());
-			// TODO: average the block weight using using method defined below
 
 			// Encode the average weight into bytes.
 			let average_weight_bytes = encode_number(average_weight);
@@ -204,10 +200,12 @@ pub mod pallet {
 			// Upload the average weight.
 			let result = skynet_substrate::upload_bytes(&average_weight_bytes, DATA_KEY, Some(&skynet_substrate::UploadOptions { timeout: 30_000, ..Default::default() }));
 			if let Ok(skylink_bytes) = result {
-				log::info! ("Uploaded average weight! Skylink: {:?}", str::from_utf8(&skylink_bytes).unwrap());
+				let skylink = str::from_utf8(&skylink_bytes).unwrap();
+
+				log::info!("Uploaded average weight! Skylink: {:?}", skylink);
 
 				// Set the skylink in the v2 skylink with the result from upload.
-				let _ = skynet_substrate::set_entry_data(PRIVATE_KEY, DATA_KEY, &skylink_bytes, None);
+				let _ = skynet_substrate::set_data_link(PRIVATE_KEY, DATA_KEY, skylink, None);
 			}
 
 			// It's a good practice to keep `fn offchain_worker()` function minimal, and move most
@@ -350,8 +348,8 @@ pub mod pallet {
 // 	None,
 // }
 
-impl<T: Config> Pallet<T> { 	
-	
+impl<T: Config> Pallet<T> {
+
 	/// This method will use a function for taking a historical_weight and "averaging" with the current block weight
 	/// We'll average over roughly 1 day of blocks.
 	fn average_weights( historical_weight: Option<u64> ) -> u64 {
@@ -364,7 +362,7 @@ impl<T: Config> Pallet<T> {
 			average_weight += block_weight / samples;
 
 			average_weight
-		} else
+		} else {
 			// No historical weight was found, so use the block weight.
 			block_weight
 		}
@@ -372,7 +370,8 @@ impl<T: Config> Pallet<T> {
 
 	fn get_historical_weight( skylink: &str ) -> Result<Option<u64>, Error> {
 		// Check to see if we have already saved a block weight average
-		let historical_weight = skynet_substrate::download_bytes( skylink, None );
+		let historical_weight = skynet_substrate::download_bytes(skylink, None);
+		log::info!("Historical weight: {:?}", historical_weight);
 
 		match historical_weight {
 			// If we get a 404, return None to indicate that there is no historical weight.

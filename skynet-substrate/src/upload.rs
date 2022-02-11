@@ -1,6 +1,9 @@
 //! Upload functions.
 
-use crate::util::{concat_strs, de_string_to_bytes, format_skylink, make_url, DEFAULT_PORTAL_URL};
+use crate::util::{
+    concat_bytes, concat_strs, de_string_to_bytes, format_skylink, make_url, str_to_bytes,
+    DEFAULT_PORTAL_URL,
+};
 
 use serde::Deserialize;
 use sp_io::offchain;
@@ -89,7 +92,7 @@ struct UploadResponse {
 
 /// Upload `bytes` to a file with `filename`.
 pub fn upload_bytes(
-    bytes: &str,
+    bytes: &[u8],
     filename: &str,
     opts: Option<&UploadOptions>,
 ) -> Result<Vec<u8>, UploadError> {
@@ -138,17 +141,17 @@ pub fn upload_bytes(
         "\r\n",
     ]);
 
-    let body = concat_strs(&[
-        "--",
-        str::from_utf8(&boundary)?,
-        "\r\n",
-        str::from_utf8(&headers)?,
-        "\r\n",
+    let body_bytes = concat_bytes(&[
+        &str_to_bytes("--"),
+        &boundary,
+        &str_to_bytes("\r\n"),
+        &headers,
+        &str_to_bytes("\r\n"),
         bytes,
-        "\r\n",
-        "--",
-        str::from_utf8(&boundary)?,
-        "--\r\n",
+        &str_to_bytes("\r\n"),
+        &str_to_bytes("--"),
+        &boundary,
+        &str_to_bytes("--\r\n"),
     ]);
 
     let content_type = concat_strs(&[
@@ -158,9 +161,8 @@ pub fn upload_bytes(
     ]);
 
     // Initiate an external HTTP POST request. This is using high-level wrappers from `sp_runtime`.
-    let mut request =
-        rt_offchain::http::Request::post(str::from_utf8(&url)?, vec![body.as_slice()])
-            .add_header("Content-Type", str::from_utf8(&content_type)?);
+    let mut request = rt_offchain::http::Request::post(str::from_utf8(&url)?, vec![body_bytes])
+        .add_header("Content-Type", str::from_utf8(&content_type)?);
 
     if let Some(cookie) = opts.custom_cookie {
         request = request.add_header("Cookie", cookie);
@@ -232,7 +234,7 @@ mod tests {
 
         t.execute_with(|| {
             // Upload
-            let skylink_returned = upload_bytes(DATA, FILE_NAME, None).unwrap();
+            let skylink_returned = upload_bytes(&str_to_bytes(DATA), FILE_NAME, None).unwrap();
 
             // Check the response.
             assert_eq!(skylink_returned, str_to_bytes(EXPECTED_DATA_LINK));
@@ -261,7 +263,7 @@ mod tests {
         t.execute_with(|| {
             // Upload
             let skylink_returned = upload_bytes(
-                DATA,
+                &str_to_bytes(DATA),
                 FILE_NAME,
                 Some(&UploadOptions {
                     portal_url: CUSTOM_PORTAL_URL,
@@ -298,7 +300,7 @@ mod tests {
         t.execute_with(|| {
             // Upload
             let skylink_returned = upload_bytes(
-                DATA,
+                &str_to_bytes(DATA),
                 FILE_NAME,
                 Some(&UploadOptions {
                     custom_cookie: Some(JWT_COOKIE),
